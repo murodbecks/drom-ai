@@ -51,7 +51,7 @@ class DromAgent:
             self.model = (
                 "claude-sonnet-4-20250514"
                 if provider == "claude"
-                else "gemini-2.5-flash"
+                else "gemini-3.1-pro-preview"
             )
 
     def run(

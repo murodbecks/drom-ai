@@ -1,14 +1,14 @@
 from backend.drom_agent import DromAgent
 
-agent = DromAgent(provider="claude")
+agent = DromAgent(provider="gemini")
 result = agent.run(
-    image_path="backend/drom_agent/assets/03_sample.jpg",
+    image_path="sample/pikachu-scene.jpeg",
     objects={
-        "cat": "backend/drom_agent/assets/03_cat.glb",
-        "table": "backend/drom_agent/assets/03_table.glb",
-        "mouse": "backend/drom_agent/assets/03_mouse.glb",
+        "pikachu": "sample/pikachu.glb",
+        "eeve": "sample/eevee.glb",
+        "tree_stunt": "sample/tree_stunt.glb",
     },
-    output_path="room_scene.glb",
+    output_path="sample/pikachu_result.glb",
 )
 
 print(f"GLB saved to: {result['glb_path']}")

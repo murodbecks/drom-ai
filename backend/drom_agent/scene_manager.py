@@ -256,7 +256,15 @@ class SceneManager:
         scene_min, scene_max = self._scene_bounds()
         center = (scene_min + scene_max) / 2
         extent = np.linalg.norm(scene_max - scene_min)
-        dist = max(float(extent) * 2.0, 6.0)
+
+        # If extent is tiny (single object at origin), force a minimum size to prevent extreme zoom
+        if extent < 0.1:
+            extent = 1.0
+
+        # Multiplier: 1.2 is usually tight but safe. 
+        # 1.4 provides a little breathing room.
+        # Previous code was 2.0 (too far).
+        dist = float(extent) * 1.4
 
         views = {
             "Front": np.array([0.0, 0.0, 1.0]),

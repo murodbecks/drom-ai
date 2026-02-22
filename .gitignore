@@ -7,6 +7,14 @@ backend/drom_agent/assets/*
 backend/drom_agent/output/*
 
 **/*/*.glb
+**/*_multiview.png
+sample/*
+objects/*
+
+backend/scribble_to_3D/assets/*
+backend/scribble_to_3D/notes/*
+backend/scribble_to_3D/objects/*
+backend/scribble_to_3D/TripoSR/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
