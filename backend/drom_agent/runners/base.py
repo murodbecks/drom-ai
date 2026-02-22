@@ -3,8 +3,9 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 import json
+import numpy as np
 
-from scene_manager import SceneManager
+from ..scene_manager import SceneManager
 
 
 # ── Tool definitions (provider-agnostic) ──────────────────────────────
@@ -21,30 +22,54 @@ TOOLS_SCHEMA = [
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "Object name"},
-                "x": {"type": "number", "description": "X position (negative=left, positive=right)"},
-                "y": {"type": "number", "description": "Y position (0=ground, positive=up)"},
-                "z": {"type": "number", "description": "Z position (negative=far/back, positive=near/front)"},
+                "x": {
+                    "type": "number",
+                    "description": "X position (negative=left, positive=right)",
+                },
+                "y": {
+                    "type": "number",
+                    "description": "Y position (0=ground, positive=up)",
+                },
+                "z": {
+                    "type": "number",
+                    "description": "Z position (negative=far/back, positive=near/front)",
+                },
             },
             "required": ["name", "x", "y", "z"],
         },
     },
     {
         "name": "set_rotation",
-        "description": "Set Euler rotation in degrees. Most objects only need Y rotation (turning left/right).",
+        "description": (
+            "Set Euler rotation in degrees. "
+            "Most objects only need Y rotation (turning left/right)."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "name": {"type": "string", "description": "Object name"},
-                "rx": {"type": "number", "description": "Rotation around X axis (tilt forward/back)"},
-                "ry": {"type": "number", "description": "Rotation around Y axis (turn left/right)"},
-                "rz": {"type": "number", "description": "Rotation around Z axis (roll)"},
+                "rx": {
+                    "type": "number",
+                    "description": "Rotation around X axis (tilt forward/back)",
+                },
+                "ry": {
+                    "type": "number",
+                    "description": "Rotation around Y axis (turn left/right)",
+                },
+                "rz": {
+                    "type": "number",
+                    "description": "Rotation around Z axis (roll)",
+                },
             },
             "required": ["name", "rx", "ry", "rz"],
         },
     },
     {
         "name": "set_scale",
-        "description": "Set scale factors. Use uniform scaling (same sx/sy/sz) unless sketch shows distortion.",
+        "description": (
+            "Set scale factors. Use uniform scaling (same sx/sy/sz) "
+            "unless sketch shows distortion."
+        ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -73,7 +98,9 @@ TOOLS_SCHEMA = [
     },
     {
         "name": "finalize_scene",
-        "description": "Export final .glb file. ONLY call when layout matches the reference sketch well.",
+        "description": (
+            "Export final .glb file. ONLY call when layout matches the reference sketch well."
+        ),
         "parameters": {"type": "object", "properties": {}, "required": []},
     },
 ]
@@ -189,13 +216,13 @@ When you call render_and_review, you'll see:
 
 def build_initial_user_prompt(object_names: list[str], objects_info: dict) -> str:
     """Build detailed initial user prompt."""
-    names_str = ", ".join(object_names)
-
     # Create a quick reference of object sizes
     size_hints = []
     for name, info in objects_info.items():
         size = info.get("size_xyz", [0, 0, 0])
-        size_hints.append(f"  - {name}: {size[0]:.1f}w × {size[1]:.1f}h × {size[2]:.1f}d")
+        size_hints.append(
+            f"  - {name}: {size[0]:.2f}w × {size[1]:.2f}h × {size[2]:.2f}d"
+        )
     sizes_str = "\n".join(size_hints)
 
     return f"""\
@@ -225,7 +252,7 @@ def build_review_prompt(iteration: int, max_iterations: int) -> str:
 
 Compare with the reference sketch:
 - **Front view**: Check X positions and heights
-- **Top view**: Check depth (Z) spacing between objects  
+- **Top view**: Check depth (Z) spacing between objects
 - **Sketch angle**: Check overall composition
 
 What needs adjustment? Make corrections with set_position/set_rotation/set_scale, then render_and_review again.
@@ -244,8 +271,11 @@ Do not explain, just call the tools."""
 
 
 def execute_tool(
-    scene: SceneManager, name: str, args: dict, output_prefix: str
-) -> tuple[dict, str | None, bool]:
+    scene: SceneManager,
+    name: str,
+    args: dict,
+    output_stem: str,
+) -> tuple[dict, Path | None, bool]:
     """
     Execute a tool call.
     Returns (result_dict, rendered_image_path or None, is_finalized).
@@ -264,12 +294,12 @@ def execute_tool(
         result = scene.get_scene_info()
     elif name == "render_and_review":
         path = scene.render_multi_view()
-        result = {"status": "rendered", "path": path}
-        rendered_path = path
+        result = {"status": "rendered", "path": str(path)}
+        rendered_path = Path(path)
     elif name == "finalize_scene":
-        filename = f"{output_prefix}_final.glb"
+        filename = f"{output_stem}_final.glb"
         path = scene.export_scene(filename)
-        result = {"status": "finalized", "path": path}
+        result = {"status": "finalized", "path": str(path)}
         is_finalized = True
     else:
         result = {"error": f"Unknown tool: {name}"}
@@ -277,12 +307,12 @@ def execute_tool(
     return result, rendered_path, is_finalized
 
 
-def read_image_bytes(path: str) -> bytes:
-    return Path(path).read_bytes()
+def read_image_bytes(path: Path) -> bytes:
+    return path.read_bytes()
 
 
-def guess_mime(path: str) -> str:
-    ext = Path(path).suffix.lower()
+def guess_mime(path: Path) -> str:
+    ext = path.suffix.lower()
     return {
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
@@ -296,29 +326,26 @@ class BaseRunner(ABC):
 
     def __init__(
         self,
-        image_path: str,
-        object_map: dict[str, str],
-        assets_dir: str = "assets",
-        output_dir: str = "output",
+        image_path: Path,
+        objects: dict[str, Path],
+        output_dir: Path,
+        output_stem: str,
         max_iterations: int = 15,
     ):
         self.image_path = image_path
-        self.object_map = object_map
-        self.assets_dir = assets_dir
+        self.objects = objects
         self.output_dir = output_dir
+        self.output_stem = output_stem
         self.max_iterations = max_iterations
 
-        # Derive output prefix from image name
-        self.output_prefix = Path(image_path).stem
-
-        self.scene = SceneManager(assets_dir=assets_dir, output_dir=output_dir)
+        self.scene = SceneManager(output_dir=output_dir)
         self.objects_info: dict = {}
         self.object_names: list[str] = []
 
     def load_objects(self) -> None:
         """Load all GLB objects into the scene."""
-        for obj_name, filename in self.object_map.items():
-            info = self.scene.load_object(obj_name, filename)
+        for obj_name, glb_path in self.objects.items():
+            info = self.scene.load_object(obj_name, glb_path)
             self.objects_info[obj_name] = info
             self.object_names.append(obj_name)
             print(
@@ -327,8 +354,13 @@ class BaseRunner(ABC):
             )
 
     @abstractmethod
-    def run(self) -> str:
-        """Run the reconstruction loop. Returns path to final GLB."""
+    def run(self) -> dict:
+        """
+        Run the reconstruction loop.
+
+        Returns:
+            dict with keys: glb_path, preview_path, iterations, status
+        """
         pass
 
     def cleanup(self) -> None:

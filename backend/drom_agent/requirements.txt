@@ -1,0 +1,9 @@
+anthropic>=0.3.0
+google-genai>=0.2.0
+numpy
+trimesh[easy]
+Pillow
+pyrender
+python-dotenv
+scipy
+networkx

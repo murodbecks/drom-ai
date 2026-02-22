@@ -1,6 +1,8 @@
 """Gemini-based runner."""
 
 import os
+from pathlib import Path
+
 from google import genai
 from google.genai import types
 
@@ -52,15 +54,15 @@ class GeminiRunner(BaseRunner):
 
     def __init__(
         self,
-        image_path: str,
-        object_map: dict[str, str],
-        assets_dir: str = "assets",
-        output_dir: str = "output",
+        image_path: Path,
+        objects: dict[str, Path],
+        output_dir: Path,
+        output_stem: str,
         max_iterations: int = 15,
         model: str = "gemini-2.5-flash",
     ):
         super().__init__(
-            image_path, object_map, assets_dir, output_dir, max_iterations
+            image_path, objects, output_dir, output_stem, max_iterations
         )
         self.model = model
         self.client = genai.Client(
@@ -69,16 +71,16 @@ class GeminiRunner(BaseRunner):
             location="global",
         )
 
-    def run(self) -> str:
+    def run(self) -> dict:
         print(f"  🤖  Provider: Gemini ({self.model})")
         print(f"  📷  Reference: {self.image_path}")
-        print(f"  📦  Objects: {self.object_map}\n")
+        print(f"  📦  Objects: {list(self.objects.keys())}\n")
 
         self.load_objects()
 
         # Render initial state
         print("\n  📸  Rendering initial state...")
-        initial_path = self.scene.render_multi_view()
+        initial_path = Path(self.scene.render_multi_view())
         initial_bytes = read_image_bytes(initial_path)
 
         system_prompt = build_system_prompt(self.objects_info, self.object_names)
@@ -116,8 +118,10 @@ class GeminiRunner(BaseRunner):
         )
 
         finalized = False
-        final_path = ""
+        final_glb_path = ""
+        final_preview_path = ""
         iteration = 0
+        status = "max_iterations_reached"
 
         while iteration < self.max_iterations:
             iteration += 1
@@ -162,12 +166,12 @@ class GeminiRunner(BaseRunner):
 
             # Execute tools
             fn_response_parts: list[types.Part] = []
-            rendered_path: str | None = None
+            rendered_path: Path | None = None
 
             for fc in function_calls:
                 args = dict(fc.args) if fc.args else {}
                 result, rpath, is_final = execute_tool(
-                    self.scene, fc.name, args, self.output_prefix
+                    self.scene, fc.name, args, self.output_stem
                 )
                 fn_response_parts.append(
                     types.Part(
@@ -180,7 +184,8 @@ class GeminiRunner(BaseRunner):
                     rendered_path = rpath
                 if is_final:
                     finalized = True
-                    final_path = result.get("path", "")
+                    final_glb_path = result.get("path", "")
+                    status = "success"
 
             user_parts: list[types.Part] = list(fn_response_parts)
 
@@ -204,11 +209,20 @@ class GeminiRunner(BaseRunner):
             if finalized:
                 print("\n  ✅  Scene finalized!")
                 break
-        else:
-            print(f"\n  ⚠️  Max iterations. Force-exporting...")
-            final_path = self.scene.export_scene(f"{self.output_prefix}_final.glb")
 
-        self.scene.render_multi_view()
+        if not finalized:
+            print(f"\n  ⚠️  Max iterations. Force-exporting...")
+            final_glb_path = self.scene.export_scene(f"{self.output_stem}_final.glb")
+
+        # Final preview render
+        final_preview_path = self.scene.render_multi_view()
         self.cleanup()
+
         print(f"\n  🏁  Done. Output: {self.output_dir}/")
-        return final_path
+
+        return {
+            "glb_path": str(final_glb_path),
+            "preview_path": str(final_preview_path),
+            "iterations": iteration,
+            "status": status,
+        }

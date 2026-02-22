@@ -2,6 +2,8 @@
 
 import os
 import base64
+from pathlib import Path
+
 import anthropic
 
 from .base import (
@@ -19,16 +21,14 @@ from .base import (
 
 def _build_claude_tools() -> list[dict]:
     """Convert generic tool schema to Claude format."""
-    tools = []
-    for tool in TOOLS_SCHEMA:
-        tools.append(
-            {
-                "name": tool["name"],
-                "description": tool["description"],
-                "input_schema": tool["parameters"],
-            }
-        )
-    return tools
+    return [
+        {
+            "name": tool["name"],
+            "description": tool["description"],
+            "input_schema": tool["parameters"],
+        }
+        for tool in TOOLS_SCHEMA
+    ]
 
 
 def _make_image_block(data: bytes, mime_type: str) -> dict:
@@ -47,29 +47,31 @@ class ClaudeRunner(BaseRunner):
 
     def __init__(
         self,
-        image_path: str,
-        object_map: dict[str, str],
-        assets_dir: str = "assets",
-        output_dir: str = "output",
+        image_path: Path,
+        objects: dict[str, Path],
+        output_dir: Path,
+        output_stem: str,
         max_iterations: int = 15,
         model: str = "claude-sonnet-4-20250514",
     ):
         super().__init__(
-            image_path, object_map, assets_dir, output_dir, max_iterations
+            image_path, objects, output_dir, output_stem, max_iterations
         )
         self.model = model
-        self.client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY"))
+        self.client = anthropic.Anthropic(
+            api_key=os.environ.get("ANTHROPIC_API_KEY")
+        )
 
-    def run(self) -> str:
+    def run(self) -> dict:
         print(f"  🤖  Provider: Claude ({self.model})")
         print(f"  📷  Reference: {self.image_path}")
-        print(f"  📦  Objects: {self.object_map}\n")
+        print(f"  📦  Objects: {list(self.objects.keys())}\n")
 
         self.load_objects()
 
         # Render initial state
         print("\n  📸  Rendering initial state...")
-        initial_path = self.scene.render_multi_view()
+        initial_path = Path(self.scene.render_multi_view())
         initial_bytes = read_image_bytes(initial_path)
 
         system_prompt = build_system_prompt(self.objects_info, self.object_names)
@@ -96,8 +98,10 @@ class ClaudeRunner(BaseRunner):
 
         tools = _build_claude_tools()
         finalized = False
-        final_path = ""
+        final_glb_path = ""
+        final_preview_path = ""
         iteration = 0
+        status = "max_iterations_reached"
 
         while iteration < self.max_iterations:
             iteration += 1
@@ -146,12 +150,12 @@ class ClaudeRunner(BaseRunner):
 
             # Execute tools and build tool_result blocks
             tool_results: list[dict] = []
-            rendered_path: str | None = None
+            rendered_path: Path | None = None
 
             for tu in tool_uses:
                 args = tu.input if tu.input else {}
                 result, rpath, is_final = execute_tool(
-                    self.scene, tu.name, args, self.output_prefix
+                    self.scene, tu.name, args, self.output_stem
                 )
 
                 # Build result content
@@ -169,7 +173,8 @@ class ClaudeRunner(BaseRunner):
                     rendered_path = rpath
                 if is_final:
                     finalized = True
-                    final_path = result.get("path", "")
+                    final_glb_path = result.get("path", "")
+                    status = "success"
 
             # Build user message with tool results
             user_content: list[dict] = tool_results
@@ -193,11 +198,20 @@ class ClaudeRunner(BaseRunner):
             if finalized:
                 print("\n  ✅  Scene finalized!")
                 break
-        else:
-            print(f"\n  ⚠️  Max iterations. Force-exporting...")
-            final_path = self.scene.export_scene(f"{self.output_prefix}_final.glb")
 
-        self.scene.render_multi_view()
+        if not finalized:
+            print(f"\n  ⚠️  Max iterations. Force-exporting...")
+            final_glb_path = self.scene.export_scene(f"{self.output_stem}_final.glb")
+
+        # Final preview render
+        final_preview_path = self.scene.render_multi_view()
         self.cleanup()
+
         print(f"\n  🏁  Done. Output: {self.output_dir}/")
-        return final_path
+
+        return {
+            "glb_path": str(final_glb_path),
+            "preview_path": str(final_preview_path),
+            "iterations": iteration,
+            "status": status,
+        }

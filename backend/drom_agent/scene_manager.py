@@ -1,26 +1,26 @@
+"""Manages loading, transforming, rendering, and exporting a 3D scene."""
+
 import os
+import platform as _platform
 import itertools
+from pathlib import Path
+
 import numpy as np
 import trimesh
 from PIL import Image, ImageDraw, ImageFont
 
-import platform as _platform
-
 if _platform.system() != "Darwin":
     os.environ["PYOPENGL_PLATFORM"] = "egl"
+
 import pyrender  # noqa: E402
 
 
 class SceneManager:
-    """Manages loading, transforming, rendering, and exporting a 3D scene
-    composed of individual .glb objects."""
+    """Manages loading, transforming, rendering, and exporting a 3D scene."""
 
-    def __init__(
-        self, assets_dir: str = "assets", output_dir: str = "output"
-    ):
-        self.assets_dir = assets_dir
-        self.output_dir = output_dir
-        os.makedirs(output_dir, exist_ok=True)
+    def __init__(self, output_dir: str | Path = "output"):
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
 
         self.objects: dict[str, trimesh.Scene | trimesh.Trimesh] = {}
         self.positions: dict[str, list[float]] = {}
@@ -29,18 +29,12 @@ class SceneManager:
         self.step_counter = 0
 
         # Reusable renderers keyed by (width, height)
-        self._renderers: dict[
-            tuple[int, int], pyrender.OffscreenRenderer
-        ] = {}
+        self._renderers: dict[tuple[int, int], pyrender.OffscreenRenderer] = {}
 
-    def _get_renderer(
-        self, width: int, height: int
-    ) -> pyrender.OffscreenRenderer:
+    def _get_renderer(self, width: int, height: int) -> pyrender.OffscreenRenderer:
         key = (width, height)
         if key not in self._renderers:
-            self._renderers[key] = pyrender.OffscreenRenderer(
-                width, height
-            )
+            self._renderers[key] = pyrender.OffscreenRenderer(width, height)
         return self._renderers[key]
 
     def cleanup(self):
@@ -54,9 +48,10 @@ class SceneManager:
 
     # ── loading ───────────────────────────────────────────────────────
 
-    def load_object(self, name: str, filename: str) -> dict:
-        path = os.path.join(self.assets_dir, filename)
-        obj = trimesh.load(path, force="scene")
+    def load_object(self, name: str, path: str | Path) -> dict:
+        """Load a GLB file as a named object."""
+        path = Path(path)
+        obj = trimesh.load(str(path), force="scene")
         self.objects[name] = obj
         self.positions[name] = [0.0, 0.0, 0.0]
         self.rotations_deg[name] = [0.0, 0.0, 0.0]
@@ -77,29 +72,19 @@ class SceneManager:
 
     # ── transforms ────────────────────────────────────────────────────
 
-    def set_position(
-        self, name: str, x: float, y: float, z: float
-    ) -> dict:
+    def set_position(self, name: str, x: float, y: float, z: float) -> dict:
         if name not in self.objects:
             return {"error": f"Object '{name}' not found"}
         self.positions[name] = [x, y, z]
         return {"status": "ok", "name": name, "position": [x, y, z]}
 
-    def set_rotation(
-        self, name: str, rx: float, ry: float, rz: float
-    ) -> dict:
+    def set_rotation(self, name: str, rx: float, ry: float, rz: float) -> dict:
         if name not in self.objects:
             return {"error": f"Object '{name}' not found"}
         self.rotations_deg[name] = [rx, ry, rz]
-        return {
-            "status": "ok",
-            "name": name,
-            "rotation_deg": [rx, ry, rz],
-        }
+        return {"status": "ok", "name": name, "rotation_deg": [rx, ry, rz]}
 
-    def set_scale(
-        self, name: str, sx: float, sy: float, sz: float
-    ) -> dict:
+    def set_scale(self, name: str, sx: float, sy: float, sz: float) -> dict:
         if name not in self.objects:
             return {"error": f"Object '{name}' not found"}
         self.scales[name] = [sx, sy, sz]
@@ -119,9 +104,7 @@ class SceneManager:
         }
 
     def get_scene_info(self) -> dict:
-        return {
-            name: self.get_object_info(name) for name in self.objects
-        }
+        return {name: self.get_object_info(name) for name in self.objects}
 
     # ── internal helpers ──────────────────────────────────────────────
 
@@ -131,15 +114,9 @@ class SceneManager:
         scl = self.scales[name]
 
         T = trimesh.transformations.translation_matrix(pos)
-        Rx = trimesh.transformations.rotation_matrix(
-            rot[0], [1, 0, 0]
-        )
-        Ry = trimesh.transformations.rotation_matrix(
-            rot[1], [0, 1, 0]
-        )
-        Rz = trimesh.transformations.rotation_matrix(
-            rot[2], [0, 0, 1]
-        )
+        Rx = trimesh.transformations.rotation_matrix(rot[0], [1, 0, 0])
+        Ry = trimesh.transformations.rotation_matrix(rot[1], [0, 1, 0])
+        Rz = trimesh.transformations.rotation_matrix(rot[2], [0, 0, 1])
         R = Rz @ Ry @ Rx
         S = np.diag([scl[0], scl[1], scl[2], 1.0])
 
@@ -163,9 +140,7 @@ class SceneManager:
             bounds = np.array(obj.bounds)
             mn, mx = bounds[0], bounds[1]
             corners = np.array(
-                list(
-                    itertools.product(*zip(mn.tolist(), mx.tolist()))
-                )
+                list(itertools.product(*zip(mn.tolist(), mx.tolist())))
             )
             ones = np.ones((corners.shape[0], 1))
             corners_h = np.hstack([corners, ones])
@@ -184,9 +159,7 @@ class SceneManager:
         for name, obj in self.objects.items():
             transform = self._build_transform(name)
             for mesh in self._gather_trimeshes(obj):
-                pr_mesh = pyrender.Mesh.from_trimesh(
-                    mesh, smooth=True
-                )
+                pr_mesh = pyrender.Mesh.from_trimesh(mesh, smooth=True)
                 pr_scene.add(pr_mesh, pose=transform)
         return pr_scene
 
@@ -229,27 +202,19 @@ class SceneManager:
     ) -> np.ndarray:
         """Render a single view and return the color array."""
         direction = direction / np.linalg.norm(direction)
-        cam_pose = self._camera_pose_from_direction(
-            center, direction, distance
-        )
+        cam_pose = self._camera_pose_from_direction(center, direction, distance)
 
         pr_scene = self._build_pyrender_scene()
         camera = pyrender.PerspectiveCamera(yfov=np.pi / 3.5)
         pr_scene.add(camera, pose=cam_pose)
 
-        light = pyrender.DirectionalLight(
-            color=[1.0, 1.0, 1.0], intensity=5.0
-        )
+        light = pyrender.DirectionalLight(color=[1.0, 1.0, 1.0], intensity=5.0)
         pr_scene.add(light, pose=cam_pose)
 
         fill_dir = np.array([-0.5, 0.3, -0.2])
         fill_dir /= np.linalg.norm(fill_dir)
-        fill_pose = self._camera_pose_from_direction(
-            center, fill_dir, distance * 0.8
-        )
-        fill = pyrender.PointLight(
-            color=[1.0, 1.0, 0.95], intensity=15.0
-        )
+        fill_pose = self._camera_pose_from_direction(center, fill_dir, distance * 0.8)
+        fill = pyrender.PointLight(color=[1.0, 1.0, 0.95], intensity=15.0)
         pr_scene.add(fill, pose=fill_pose)
 
         renderer = self._get_renderer(width, height)
@@ -272,30 +237,22 @@ class SceneManager:
 
     # ── rendering ─────────────────────────────────────────────────────
 
-    def render_scene(
-        self, width: int = 1024, height: int = 768
-    ) -> str:
+    def render_scene(self, width: int = 1024, height: int = 768) -> str:
         scene_min, scene_max = self._scene_bounds()
         center = (scene_min + scene_max) / 2
         extent = np.linalg.norm(scene_max - scene_min)
         dist = max(float(extent) * 1.8, 5.0)
 
         direction = np.array([0.3, 0.5, 0.8])
-        color = self._render_single_view(
-            center, direction, dist, width, height
-        )
+        color = self._render_single_view(center, direction, dist, width, height)
 
         self.step_counter += 1
-        path = os.path.join(
-            self.output_dir, f"step_{self.step_counter:03d}.png"
-        )
-        Image.fromarray(color).save(path)
+        path = self.output_dir / f"step_{self.step_counter:03d}.png"
+        Image.fromarray(color).save(str(path))
         print(f"  📸  Rendered → {path}")
-        return path
+        return str(path)
 
-    def render_multi_view(
-        self, width: int = 768, height: int = 576
-    ) -> str:
+    def render_multi_view(self, width: int = 768, height: int = 576) -> str:
         scene_min, scene_max = self._scene_bounds()
         center = (scene_min + scene_max) / 2
         extent = np.linalg.norm(scene_max - scene_min)
@@ -312,9 +269,7 @@ class SceneManager:
         images: list[Image.Image] = []
 
         for label, direction in views.items():
-            color = self._render_single_view(
-                center, direction, dist, width, height
-            )
+            color = self._render_single_view(center, direction, dist, width, height)
             img = Image.fromarray(color)
 
             draw = ImageDraw.Draw(img)
@@ -343,25 +298,24 @@ class SceneManager:
         grid.paste(images[3], (width, height))
 
         self.step_counter += 1
-        path = os.path.join(
-            self.output_dir,
-            f"step_{self.step_counter:03d}_multiview.png",
-        )
-        grid.save(path, quality=90)
+        path = self.output_dir / f"step_{self.step_counter:03d}_multiview.png"
+        grid.save(str(path), quality=90)
         print(f"  📸  Multi-view rendered → {path}")
-        return path
+        return str(path)
 
-    # ── export ────────────────────────────────────────────────────────        
+    # ── export ────────────────────────────────────────────────────────
+
     def export_scene(self, filename: str = "final_scene.glb") -> str:
         combined = trimesh.Scene()
         for name, obj in self.objects.items():
             transform = self._build_transform(name)
             for i, mesh in enumerate(self._gather_trimeshes(obj)):
                 mesh_copy = mesh.copy()
-                
-                # Strip vertex colors to avoid export issues
-                # The mesh will keep its texture/material if present
-                if hasattr(mesh_copy, 'visual') and hasattr(mesh_copy.visual, 'vertex_colors'):
+
+                # Fix vertex colors to prevent export errors
+                if hasattr(mesh_copy, "visual") and hasattr(
+                    mesh_copy.visual, "vertex_colors"
+                ):
                     try:
                         vc = mesh_copy.visual.vertex_colors
                         if vc is not None:
@@ -372,13 +326,14 @@ class SceneManager:
                                 mesh_copy.visual.vertex_colors = None
                     except Exception:
                         pass
-                
+
                 combined.add_geometry(
                     mesh_copy,
                     node_name=f"{name}_{i}",
                     transform=transform,
                 )
-        path = os.path.join(self.output_dir, filename)
-        combined.export(path)
+
+        path = self.output_dir / filename
+        combined.export(str(path))
         print(f"  💾  Exported → {path}")
-        return path
+        return str(path)
